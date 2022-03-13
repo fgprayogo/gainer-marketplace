@@ -4,9 +4,10 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "hardhat/console.sol";
 
-contract GainerMarketplace{
+contract GainerMarketplace is Ownable{
     constructor (IERC20 erc20token) {
         _erc20token = erc20token;
     }
@@ -14,16 +15,17 @@ contract GainerMarketplace{
     IERC20 private _erc20token;                     /// @notice USDT ADDRESS POLYGON
     IERC1155 private _gainerNFT;                    /// @notice GAINER NFT
 
-    address private _gainerMarketplaceTokenHolder;  /// @notice GAINER MARKETPLACE TOKEN HOLDER
+    address private _gainerMarketplaceTokenHolder;  /// @notice GAINER MARKETPLACE TOKEN HOLDER ADDRESS
     uint public _gainerNFTprice = 10000000;         /// @notice GAINER NFT BASE PRICE
     uint private _time;                             /// @notice TIME
-    uint private _multiplier = 1;                   /// @notice MULTIPLIER
-    uint private currentDay;                        /// @notice CURRENT DAY
-    uint private nextDay;                           /// @notice NEXT DAY
-    
+    uint private _rebasePercentage = 5;             /// @notice MULTIPLIER
+    uint public nextDay;                            /// @notice NEXT DAY
+    uint private _transactionFee = 2;               /// @notice TRANSACTION FEE 2%
+    uint private feeCollector;                      /// @notice FEE COLLECTOR
+
     mapping(address => uint256) public userErc20TokenBalanceInGainerProtocol;  /// @notice @param useraddress 
-    mapping(uint => mapping(uint => NFTListing)) public Listing; /// @notice @param tokenId, @param listingId
-    mapping(address => mapping(uint=> uint)) public UserListing; /// @notice @param sellerAddr @param tokenId, @param listingId
+    mapping(uint => mapping(uint => NFTListing)) public Listing;               /// @notice @param tokenId, @param listingId
+    mapping(address => mapping(uint=> uint)) public UserListing;               /// @notice @param sellerAddr @param tokenId, @param listingId
     
     uint constant public headGainerOne  = 0; /// @notice CURRENT LISTING GAINER ONE
     uint public tailGainerOne           = 0; /// @notice LAST LISTING GAINER ONE
@@ -47,10 +49,10 @@ contract GainerMarketplace{
     event DoneTrxGainerTen(address indexed sellerAddr, uint256 listingId, uint256 indexed amount, address indexed buyerAddr, string note);
     event ModifyListing(address sellerAddr, uint256 listingId, uint256 tokenId, uint256 amount, uint prevListingId);
     
-    function setupDay(uint _nextDay) public {
-        nextDay = _nextDay;
-    }
-    
+    /// @notice PUBLIC MARKETPLACE MAIN FUNCTION 
+    /// @notice PUBLIC MARKETPLACE MAIN FUNCTION
+    /// @notice PUBLIC MARKETPLACE MAIN FUNCTION
+
     function showPrice() public view returns(uint){
         if(block.timestamp > nextDay){
             uint dayDifferent = (block.timestamp - nextDay) / 60 / 60 / 24;
@@ -59,7 +61,7 @@ contract GainerMarketplace{
             }else{
                 uint _gainerBasePrice = _gainerNFTprice;
                 for(uint i = 0 ; i < dayDifferent; i++){
-                    _gainerBasePrice += _gainerNFTprice * _multiplier / 100;
+                    _gainerBasePrice += _gainerNFTprice * _rebasePercentage / 1000;
                 }
                 return _gainerBasePrice;
             }
@@ -74,7 +76,7 @@ contract GainerMarketplace{
             if(dayDifferent > 0){
                 uint _gainerBasePrice = _gainerNFTprice;
                 for(uint i = 0 ; i < dayDifferent; i++){
-                    _gainerBasePrice += _gainerNFTprice * _multiplier / 100;
+                    _gainerBasePrice += _gainerNFTprice * _rebasePercentage / 1000;
                     nextDay += 1 days;
                 }
                 _gainerNFTprice = _gainerBasePrice;
@@ -123,7 +125,7 @@ contract GainerMarketplace{
     function addListingNFT(uint tokenId, uint amount)public{
         require(tokenId == 0 || tokenId == 1 || tokenId == 2, "NOT ALLOWED");
         require(checkUserListing(tokenId), "YOU ALREADY HAVE A LISTING");
-        
+        updatePrice();
         _gainerNFT.safeTransferFrom(msg.sender, _gainerMarketplaceTokenHolder, tokenId, amount, "");
         
         if(tokenId == 0){
@@ -217,8 +219,9 @@ contract GainerMarketplace{
         while(_tokenAmount != 0){
             console.log("Token Amount : " , _tokenAmount); 
             if(_tokenAmount > _sellerListing.amount){
-                uint erc20seller            = gainerNFTprice * _sellerListing.amount;
-                     _tokenAmount          -= _sellerListing.amount;
+                     feeCollector += (gainerNFTprice * _sellerListing.amount * _transactionFee) / 100;
+                uint erc20seller   = (gainerNFTprice * _sellerListing.amount) - ((gainerNFTprice * _sellerListing.amount * _transactionFee) / 100);
+                     _tokenAmount -= _sellerListing.amount;
                 console.log("BUYING FROM > SELLER TOKEN " , _sellerListing.amount);
                      uint amountTraded = _sellerListing.amount;
                      _sellerListing.amount  = 0;
@@ -261,10 +264,11 @@ contract GainerMarketplace{
                 _sellerListing = nextData;
                 console.log("BUYING FROM > BUYER TOKEN" , _tokenAmount);
             }else if(_tokenAmount < _sellerListing.amount){
-                 uint erc20seller            = gainerNFTprice * _tokenAmount;
-                 uint amountTraded           = _tokenAmount;
-                      _sellerListing.amount -= _tokenAmount;
-                      _tokenAmount           = 0;
+                     feeCollector          += (gainerNFTprice * _tokenAmount * _transactionFee) / 100;
+                uint erc20seller            = (gainerNFTprice * _tokenAmount) - ((gainerNFTprice * _tokenAmount * _transactionFee) / 100);
+                uint amountTraded           = _tokenAmount;
+                     _sellerListing.amount -= _tokenAmount;
+                     _tokenAmount           = 0;
 
                 userErc20TokenBalanceInGainerProtocol[_sellerListing.sellerAddr] += erc20seller; 
 
@@ -279,9 +283,10 @@ contract GainerMarketplace{
                 console.log("BUYING FROM < SELLER TOKEN ", _sellerListing.amount);   
                 console.log("BUYING FROM < BUYER TOKEN", _tokenAmount);   
             }else if(_tokenAmount == _sellerListing.amount){
-                uint erc20seller  = gainerNFTprice * _sellerListing.amount;
-                uint amountTraded = _sellerListing.amount;
-                     _tokenAmount = 0;
+                     feeCollector += (gainerNFTprice * _sellerListing.amount * _transactionFee) / 100;
+                uint erc20seller   = (gainerNFTprice * _sellerListing.amount) - (gainerNFTprice * _sellerListing.amount * _transactionFee) / 100;
+                uint amountTraded  = _sellerListing.amount;
+                     _tokenAmount  = 0;
                 console.log("BUYING FROM = SELLER TOKEN", _sellerListing.amount);   
                 _sellerListing.amount = 0;
                  userErc20TokenBalanceInGainerProtocol[_sellerListing.sellerAddr] += erc20seller; 
@@ -327,26 +332,35 @@ contract GainerMarketplace{
         return true;
     }
 
-    function addDoneTrx(uint i, address sellerAddr, uint listingId, uint tokenId, uint tokenAmount, bool isSubmit) internal {
-       address[] memory _sellerAddr;
-        uint[] memory _sellerListingId;
-        uint[] memory _sellerListingAmount;
+    function cancelListing(uint tokenId) public {
+        require(checkUserListing(tokenId) == false , "YOU DONT HAVE A LISTING");
+        uint userListingId = UserListing[msg.sender][tokenId];
+        NFTListing storage _sellerListing = Listing[tokenId][userListingId];
 
-        if(!isSubmit){
-            _sellerAddr[i] = sellerAddr;
-            _sellerListingAmount[i] = tokenAmount;
-            _sellerListingId[i] = listingId;
-        }else if(isSubmit){
-            for(uint j = 0 ; j<_sellerAddr.length; j++){
-                emit DoneTrx(_sellerAddr[j], _sellerListingId[j], tokenId, _sellerListingAmount[j], msg.sender, "");
+        if(tokenId == 0){
+            if(_sellerListing.selfIndex == tailGainerOne){
+                tailGainerOne =  Listing[tokenId][tailGainerOne].prev;
+            }
+        }else if(tokenId == 1){
+           if(_sellerListing.selfIndex == tailGainerFive){
+                tailGainerFive =  Listing[tokenId][tailGainerFive].prev;
+            }
+        }else{
+            if(_sellerListing.selfIndex == tailGainerTen){
+                tailGainerTen =  Listing[tokenId][tailGainerTen].prev;
             }
         }
-    }    
-    
-    function setGainerNFTurlAndGainerTokenHolder(IERC1155 gainerNFTaddr, address gainerMarketplaceTokenHolder) public returns(bool){
-        _gainerNFT = gainerNFTaddr;
-        _gainerMarketplaceTokenHolder = gainerMarketplaceTokenHolder;
-        return true;
+
+        uint256 a =  Listing[tokenId][_sellerListing.selfIndex].prev;
+        uint256 b = Listing[tokenId][_sellerListing.selfIndex].next;
+
+        Listing[tokenId][a].next = Listing[tokenId][_sellerListing.selfIndex].next;
+        Listing[tokenId][b].prev = Listing[tokenId][_sellerListing.selfIndex].prev;
+
+        _gainerNFT.safeTransferFrom(_gainerMarketplaceTokenHolder, msg.sender, tokenId, _sellerListing.amount, "");
+        delete UserListing[_sellerListing.sellerAddr][tokenId];
+        delete Listing[tokenId][_sellerListing.selfIndex];   
+             
     }
 
     function withdrawUserERC20Token() public {
@@ -355,6 +369,28 @@ contract GainerMarketplace{
         userErc20TokenBalanceInGainerProtocol[msg.sender] = 0;
         _erc20token.transfer(msg.sender, _balance); 
     }
+
+    /// @notice OWNER SETUP MARKETPLACE MAIN FUNCTION 
+    /// @notice OWNER SETUP MARKETPLACE MAIN FUNCTION
+    /// @notice OWNER SETUP MARKETPLACE MAIN FUNCTION
+
+    function setGainerNFTurlAndGainerTokenHolder(IERC1155 gainerNFTaddr, address gainerMarketplaceTokenHolder) public onlyOwner returns(bool){
+        _gainerNFT = gainerNFTaddr;
+        _gainerMarketplaceTokenHolder = gainerMarketplaceTokenHolder;
+        return true;
+    }
+
+    function setupDay(uint _nextDay) public onlyOwner{
+        nextDay = _nextDay;
+    }
+
+    function withdrawFeeTransaction() public onlyOwner{
+        _erc20token.transfer(msg.sender, feeCollector); 
+    }
+
+    /// @notice PUBLIC FUNCTION PROTOCOL ACCOUNT
+    /// @notice PUBLIC FUNCTION PROTOCOL ACCOUNT
+    /// @notice PUBLIC FUNCTION PROTOCOL ACCOUNT
 
     address private _protocolWalletAddr;
 
@@ -379,55 +415,79 @@ contract GainerMarketplace{
         _gainerNFT.safeTransferFrom(_protocolWalletAddr, msg.sender, tokenId, tokenAmount, "");
     }
 
-    function setProtocolWalletAddr(address protocolWalletAddr)public{
+    /// @notice OWNER FUNCTION SETUP PROTOCOL ACCOUNT 
+    /// @notice OWNER FUNCTION SETUP PROTOCOL ACCOUNT
+    /// @notice OWNER FUNCTION SETUP PROTOCOL ACCOUNT
+
+    function setProtocolWalletAddr(address protocolWalletAddr)public onlyOwner{
         _protocolWalletAddr = protocolWalletAddr;
     }
+
+    /// @notice PUBLIC FUNCTION GIVEAWAY
+    /// @notice PUBLIC FUNCTION GIVEAWAY
+    /// @notice PUBLIC FUNCTION GIVEAWAY
 
     address private _giveAwayWalletAddr;
     mapping(address => bool) public userClaimGiveAway;
     bool public isClaimOpen;
+    uint private _gainerOneGiveAwayAmount = 10;
+    uint private _gainerFiveGiveAwayAmount = 2;
+    uint private _gainerTenGiveAwayAmount = 1;
     
-    function claimGiveAway()public{
+    function claimGiveAway()public {
         require(isClaimOpen, "NOT CLAIMABLE YET");
         uint _giveAwayWalletAddrGainerOneBalance = _gainerNFT.balanceOf(_giveAwayWalletAddr, 0); //chek seller gtoken balance in wallet
         uint _giveAwayWalletAddrGainerFiveBalance = _gainerNFT.balanceOf(_giveAwayWalletAddr, 1); //chek seller gtoken balance in wallet
         uint _giveAwayWalletAddrGainerTenBalance = _gainerNFT.balanceOf(_giveAwayWalletAddr, 2); //chek seller gtoken balance in wallet
         require(_giveAwayWalletAddrGainerOneBalance > 0 || _giveAwayWalletAddrGainerFiveBalance > 0 || _giveAwayWalletAddrGainerTenBalance > 0, "ALL NFTs ALREADY CLAIMED") ;
         if(userClaimGiveAway[msg.sender] == false){
-            userClaimGiveAway[msg.sender] == true;
+            userClaimGiveAway[msg.sender] = true;
             if(_giveAwayWalletAddrGainerOneBalance > 0){
-                _gainerNFT.safeTransferFrom(_giveAwayWalletAddr, msg.sender, 0, 10, "");
+                _gainerNFT.safeTransferFrom(_giveAwayWalletAddr, msg.sender, 0, _gainerOneGiveAwayAmount, "");
             }else if(_giveAwayWalletAddrGainerFiveBalance > 0){
-                _gainerNFT.safeTransferFrom(_giveAwayWalletAddr, msg.sender, 1, 2, "");
+                _gainerNFT.safeTransferFrom(_giveAwayWalletAddr, msg.sender, 1, _gainerFiveGiveAwayAmount, "");
             }else if(_giveAwayWalletAddrGainerTenBalance > 0){
-                _gainerNFT.safeTransferFrom(_giveAwayWalletAddr, msg.sender, 2, 1, "");
+                _gainerNFT.safeTransferFrom(_giveAwayWalletAddr, msg.sender, 2, _gainerTenGiveAwayAmount, "");
             }
         }else{
             require(userClaimGiveAway[msg.sender] == false, "YOU ALREADY CLAIMED");
         }
     }
 
-    function setGiveAwayWalletAddr(address giveAwayWalletAddr) public {
+    /// @notice OWNER FUNCTION SETUP GIVE AWAY 
+    /// @notice OWNER FUNCTION SETUP GIVE AWAY
+    /// @notice OWNER FUNCTION SETUP GIVE AWAY
+
+    function setGiveAwayWalletAddr(address giveAwayWalletAddr) public onlyOwner{
         _giveAwayWalletAddr = giveAwayWalletAddr;
     }
 
-    function setStatusGiveaway(bool status) public {
+    function setStatusGiveaway(bool status) public onlyOwner{
         isClaimOpen = status;
     }
 
-    IERC20 private _otherERC20Token;                     /// @notice USDT ADDRESS POLYGON
+    function setNFTGiveAwayAmount(uint gainerOneGiveAwayAmount, uint gainerFiveGiveAwayAmount, uint gainerTenGiveAwayAmount) public onlyOwner {
+        _gainerOneGiveAwayAmount = gainerOneGiveAwayAmount;
+        _gainerFiveGiveAwayAmount = gainerFiveGiveAwayAmount;
+        _gainerTenGiveAwayAmount = gainerTenGiveAwayAmount;
+    }
+
+    /// @notice OWNER FUNCTION SETUP OTHER ERC20TOKEN 
+    /// @notice OWNER FUNCTION SETUP OTHER ERC20TOKEN
+    /// @notice OWNER FUNCTION SETUP OTHER ERC20TOKEN
+
+    IERC20 private _otherERC20Token;
 
     function showOtherERC20Token() public view returns(IERC20){
         return _otherERC20Token;
     }
 
-    function setOtherERC20Token(IERC20 addr) public {
+    function setOtherERC20Token(IERC20 addr) public onlyOwner {
         _otherERC20Token = addr;
     }
 
-    function transferOtherERC20Token(address _to) public {
+    function transferOtherERC20Token(address _to) public onlyOwner {
         uint _balance = _otherERC20Token.balanceOf(address(this));
-        _otherERC20Token.transfer(_to, _balance); 
+        _otherERC20Token.transfer(_to, _balance);
     }
 }
-
