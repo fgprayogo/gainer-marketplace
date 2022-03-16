@@ -5,23 +5,25 @@ import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "hardhat/console.sol";
 
-contract GainerMarketplace is Ownable{
+contract GainerMarketplace is Ownable, ReentrancyGuard{
     constructor (IERC20 erc20token) {
         _erc20token = erc20token;
     }
 
-    IERC20 private _erc20token;                     /// @notice USDT ADDRESS POLYGON
-    IERC1155 private _gainerNFT;                    /// @notice GAINER NFT
+    IERC20 public _erc20token;                     /// @notice USDT ADDRESS POLYGON
+    IERC1155 public _gainerNFT;                    /// @notice GAINER NFT
 
-    address private _gainerMarketplaceTokenHolder;  /// @notice GAINER MARKETPLACE TOKEN HOLDER ADDRESS
-    uint public _gainerNFTprice = 10000000;         /// @notice GAINER NFT BASE PRICE
-    uint private _time;                             /// @notice TIME
-    uint private _rebasePercentage = 5;             /// @notice MULTIPLIER
-    uint public nextDay;                            /// @notice NEXT DAY
-    uint private _transactionFee = 2;               /// @notice TRANSACTION FEE 2%
-    uint private feeCollector;                      /// @notice FEE COLLECTOR
+    address public _gainerMarketplaceTokenHolder;  /// @notice GAINER MARKETPLACE TOKEN HOLDER ADDRESS
+    uint public _gainerNFTprice = 10000000;        /// @notice GAINER NFT BASE PRICE
+    uint public _time;                             /// @notice TIME
+    uint public _rebasePercentage = 5;             /// @notice MULTIPLIER
+    uint public nextDay;                           /// @notice NEXT DAY
+    uint public _transactionFee = 2;               /// @notice TRANSACTION FEE 2%
+    uint public feeCollector;                      /// @notice FEE COLLECTOR
+    address public _protocolWalletAddr;            /// @notice PROTOCOL WALLET ADDRESS
 
     mapping(address => uint256) public userErc20TokenBalanceInGainerProtocol;  /// @notice @param useraddress 
     mapping(uint => mapping(uint => NFTListing)) public Listing;               /// @notice @param tokenId, @param listingId
@@ -84,15 +86,15 @@ contract GainerMarketplace is Ownable{
         }
     }
     
-    function isEmpty(uint tokenId, uint head) public view returns(bool){
+    function isEmpty(uint tokenId, uint head) public view returns (bool){
         return(Listing[tokenId][head].next == 0);   
     }
 
-    function checkUserListing(uint tokenId)public view returns(bool){
+    function checkUserListing(uint tokenId) public view returns (bool){
         return(UserListing[msg.sender][tokenId]==0);
     }
 
-    function checkTopListing(uint tokenId)public view returns(NFTListing memory){
+    function checkTopListing(uint tokenId) public view returns (NFTListing memory){
         NFTListing memory listing;
         if(tokenId == 0){
             uint _listingId = Listing[tokenId][headGainerOne].next;
@@ -107,7 +109,7 @@ contract GainerMarketplace is Ownable{
         return listing;
     }
     
-    function checkLastListing(uint tokenId)public view returns(NFTListing memory){
+    function checkLastListing(uint tokenId) public view returns (NFTListing memory){
         NFTListing memory listing;
         if(tokenId == 0){
             uint _listingId = Listing[tokenId][tailGainerOne].selfIndex;
@@ -122,7 +124,7 @@ contract GainerMarketplace is Ownable{
         return listing;
     }
 
-    function addListingNFT(uint tokenId, uint amount)public{
+    function addListingNFT(uint tokenId, uint amount) public {
         require(tokenId == 0 || tokenId == 1 || tokenId == 2, "NOT ALLOWED");
         require(checkUserListing(tokenId), "YOU ALREADY HAVE A LISTING");
         updatePrice();
@@ -157,10 +159,10 @@ contract GainerMarketplace is Ownable{
                 Listing[tokenId][tailGainerFive].next = tailGainerFive+1;
                 Listing[tokenId][tailGainerFive+1] = NFTListing(tailGainerFive, tailGainerFive+1, 0, msg.sender, amount);
                 UserListing[msg.sender][tokenId] = tailGainerFive+1;
-                if(tailGainerOne == type(uint).max){
-                    tailGainerOne = 1;
+                if(tailGainerFive == type(uint).max){
+                    tailGainerFive = 1;
                 }else  {
-                    tailGainerOne++;
+                    tailGainerFive++;
                 }
                 emit AddListing(msg.sender, tailGainerFive, tokenId, amount);
             }
@@ -175,17 +177,17 @@ contract GainerMarketplace is Ownable{
                 Listing[tokenId][tailGainerTen].next = tailGainerTen+1;
                 Listing[tokenId][tailGainerTen+1] = NFTListing(tailGainerTen, tailGainerTen+1, 0, msg.sender, amount);
                 UserListing[msg.sender][tokenId] = tailGainerTen+1;
-               if(tailGainerOne == type(uint).max){
-                    tailGainerOne = 1;
+               if(tailGainerTen == type(uint).max){
+                    tailGainerTen = 1;
                 }else  {
-                    tailGainerOne++;
+                    tailGainerTen++;
                 }
                 emit AddListing(msg.sender, tailGainerTen, tokenId, amount);
             }
         }
     }
 
-    function buyNFT(uint moneyAmount, uint tokenId, uint tokenAmount) public returns(bool){
+    function buyNFT(uint moneyAmount, uint tokenId, uint tokenAmount) public nonReentrant {
         updatePrice();
 
         uint gainerNFTprice;
@@ -198,11 +200,9 @@ contract GainerMarketplace is Ownable{
         }
 
         require(tokenId == 0 || tokenId == 1 || tokenId == 2, "NOT ALLOWED");
-        require(moneyAmount == tokenAmount * gainerNFTprice, "MONEY AMOUNT MUST MATCH");
-        uint _protocolGtokenBalance = _gainerNFT.balanceOf(_gainerMarketplaceTokenHolder, tokenId); //chek seller gtoken balance in wallet
-        require(tokenAmount <= _protocolGtokenBalance, "OUT OF STOCK");
-        
-        _erc20token.transferFrom(msg.sender, address(this), moneyAmount); //transfer buyer money to protocol
+        require(moneyAmount == tokenAmount * gainerNFTprice, "MONEY MUST MATCH");
+        require(_erc20token.balanceOf(msg.sender) >= moneyAmount, "INSUFFICIENT BALLANCE");
+        require( _gainerNFT.balanceOf(_gainerMarketplaceTokenHolder, tokenId) >= tokenAmount , "OUT OF STOCK");
 
         uint _tokenAmount = tokenAmount;
         NFTListing memory _headListing;
@@ -225,7 +225,6 @@ contract GainerMarketplace is Ownable{
                 console.log("BUYING FROM > SELLER TOKEN " , _sellerListing.amount);
                      uint amountTraded = _sellerListing.amount;
                      _sellerListing.amount  = 0;
-
 
                 if(tokenId == 0){
                     if(_sellerListing.selfIndex == tailGainerOne){
@@ -305,14 +304,11 @@ contract GainerMarketplace is Ownable{
                     }
                 }
 
-                uint256 a =  Listing[tokenId][_sellerListing.selfIndex].prev;
-                uint256 b = Listing[tokenId][_sellerListing.selfIndex].next;
-
+                uint256 a                = Listing[tokenId][_sellerListing.selfIndex].prev;
+                uint256 b                = Listing[tokenId][_sellerListing.selfIndex].next;
                 Listing[tokenId][a].next = Listing[tokenId][_sellerListing.selfIndex].next;
                 Listing[tokenId][b].prev = Listing[tokenId][_sellerListing.selfIndex].prev;
        
-                NFTListing storage nextData = Listing[tokenId][_sellerListing.next];
-
                 if(tokenId == 0){
                     emit DoneTrxGainerOne(_sellerListing.sellerAddr, _sellerListing.selfIndex, amountTraded, msg.sender, "");
                 }else if(tokenId == 1){
@@ -323,16 +319,35 @@ contract GainerMarketplace is Ownable{
 
                 delete UserListing[_sellerListing.sellerAddr][tokenId];
                 delete Listing[tokenId][_sellerListing.selfIndex];
-
-                _sellerListing = nextData;
                 console.log("BUYING FROM = BUYER TOKEN", _tokenAmount);   
             }
         }
+        assert(_tokenAmount == 0);
+        _erc20token.transferFrom(msg.sender, address(this), moneyAmount); //transfer buyer money to protocol
         _gainerNFT.safeTransferFrom(_gainerMarketplaceTokenHolder, msg.sender, tokenId, tokenAmount, "");
-        return true;
     }
 
-    function cancelListing(uint tokenId) public {
+    function buyNFTFromGainerProtocol(uint moneyAmount, uint tokenId, uint tokenAmount) public nonReentrant {
+        updatePrice();
+
+        uint gainerNFTprice;
+        if(tokenId == 0){
+            gainerNFTprice = _gainerNFTprice;
+        }else if(tokenId == 1){
+            gainerNFTprice = _gainerNFTprice * 5;
+        }else{
+            gainerNFTprice = _gainerNFTprice * 10;
+        }
+
+        require(tokenId == 0 || tokenId == 1 || tokenId == 2, "NOT ALLOWED");
+        require(moneyAmount == tokenAmount * gainerNFTprice, "MONEY MUST MATCH");
+        require(_gainerNFT.balanceOf(_protocolWalletAddr, tokenId) >= tokenAmount, "OUT OF STOCK");
+                
+        _erc20token.transferFrom(msg.sender, _protocolWalletAddr, moneyAmount); 
+        _gainerNFT.safeTransferFrom(_protocolWalletAddr, msg.sender, tokenId, tokenAmount, "");
+    }
+
+    function cancelListing(uint tokenId) public nonReentrant {
         require(checkUserListing(tokenId) == false , "YOU DONT HAVE A LISTING");
         uint userListingId = UserListing[msg.sender][tokenId];
         NFTListing storage _sellerListing = Listing[tokenId][userListingId];
@@ -363,7 +378,7 @@ contract GainerMarketplace is Ownable{
              
     }
 
-    function withdrawUserERC20Token() public {
+    function withdrawUserERC20Token() public nonReentrant {
         uint _balance = userErc20TokenBalanceInGainerProtocol[msg.sender];
         require(_balance > 0, "Not enaugh balance");
         userErc20TokenBalanceInGainerProtocol[msg.sender] = 0;
@@ -374,67 +389,37 @@ contract GainerMarketplace is Ownable{
     /// @notice OWNER SETUP MARKETPLACE MAIN FUNCTION
     /// @notice OWNER SETUP MARKETPLACE MAIN FUNCTION
 
-    function setGainerNFTurlAndGainerTokenHolder(IERC1155 gainerNFTaddr, address gainerMarketplaceTokenHolder) public onlyOwner returns(bool){
+    function setGainerNFTurlAndGainerTokenHolder(IERC1155 gainerNFTaddr, address gainerMarketplaceTokenHolder) public onlyOwner {
         _gainerNFT = gainerNFTaddr;
         _gainerMarketplaceTokenHolder = gainerMarketplaceTokenHolder;
-        return true;
     }
 
     function setupDay(uint _nextDay) public onlyOwner{
         nextDay = _nextDay;
     }
 
-    function withdrawFeeTransaction() public onlyOwner{
-        _erc20token.transfer(msg.sender, feeCollector); 
-    }
-
-    /// @notice PUBLIC FUNCTION PROTOCOL ACCOUNT
-    /// @notice PUBLIC FUNCTION PROTOCOL ACCOUNT
-    /// @notice PUBLIC FUNCTION PROTOCOL ACCOUNT
-
-    address private _protocolWalletAddr;
-
-    function buyNFTFromGainerProtocol(uint moneyAmount, uint tokenId, uint tokenAmount) public {
-        updatePrice();
-
-        uint gainerNFTprice;
-        if(tokenId == 0){
-            gainerNFTprice = _gainerNFTprice;
-        }else if(tokenId == 1){
-            gainerNFTprice = _gainerNFTprice * 5;
-        }else{
-            gainerNFTprice = _gainerNFTprice * 10;
-        }
-
-        require(tokenId == 0 || tokenId == 1 || tokenId == 2, "NOT ALLOWED");
-        require(moneyAmount == tokenAmount * gainerNFTprice, "MONEY AMOUNT MUST MATCH");
-        uint _protocolGtokenBalance = _gainerNFT.balanceOf(_protocolWalletAddr, tokenId); 
-        require(tokenAmount <= _protocolGtokenBalance, "OUT OF STOCK");
-        
-        _erc20token.transferFrom(msg.sender, _protocolWalletAddr, moneyAmount); 
-        _gainerNFT.safeTransferFrom(_protocolWalletAddr, msg.sender, tokenId, tokenAmount, "");
-    }
-
-    /// @notice OWNER FUNCTION SETUP PROTOCOL ACCOUNT 
-    /// @notice OWNER FUNCTION SETUP PROTOCOL ACCOUNT
-    /// @notice OWNER FUNCTION SETUP PROTOCOL ACCOUNT
-
-    function setProtocolWalletAddr(address protocolWalletAddr)public onlyOwner{
+    function setProtocolWalletAddr(address protocolWalletAddr) public onlyOwner{
         _protocolWalletAddr = protocolWalletAddr;
     }
 
+    function withdrawFeeTransaction() public onlyOwner{
+        require(feeCollector > 0, "NOT ENAUGH BALANCE");
+        _erc20token.transfer(msg.sender, feeCollector); 
+        feeCollector = 0;
+    }
+
     /// @notice PUBLIC FUNCTION GIVEAWAY
     /// @notice PUBLIC FUNCTION GIVEAWAY
     /// @notice PUBLIC FUNCTION GIVEAWAY
 
-    address private _giveAwayWalletAddr;
+    address public _giveAwayWalletAddr;
     mapping(address => bool) public userClaimGiveAway;
     bool public isClaimOpen;
-    uint private _gainerOneGiveAwayAmount = 10;
-    uint private _gainerFiveGiveAwayAmount = 2;
-    uint private _gainerTenGiveAwayAmount = 1;
+    uint public _gainerOneGiveAwayAmount = 10;
+    uint public _gainerFiveGiveAwayAmount = 2;
+    uint public _gainerTenGiveAwayAmount = 1;
     
-    function claimGiveAway()public {
+    function claimGiveAway() public {
         require(isClaimOpen, "NOT CLAIMABLE YET");
         uint _giveAwayWalletAddrGainerOneBalance = _gainerNFT.balanceOf(_giveAwayWalletAddr, 0); //chek seller gtoken balance in wallet
         uint _giveAwayWalletAddrGainerFiveBalance = _gainerNFT.balanceOf(_giveAwayWalletAddr, 1); //chek seller gtoken balance in wallet
@@ -476,7 +461,7 @@ contract GainerMarketplace is Ownable{
     /// @notice OWNER FUNCTION SETUP OTHER ERC20TOKEN
     /// @notice OWNER FUNCTION SETUP OTHER ERC20TOKEN
 
-    IERC20 private _otherERC20Token;
+    IERC20 public _otherERC20Token;
 
     function showOtherERC20Token() public view returns(IERC20){
         return _otherERC20Token;
@@ -486,8 +471,9 @@ contract GainerMarketplace is Ownable{
         _otherERC20Token = addr;
     }
 
-    function transferOtherERC20Token(address _to) public onlyOwner {
+    function transferOtherERC20Token() public onlyOwner {
         uint _balance = _otherERC20Token.balanceOf(address(this));
-        _otherERC20Token.transfer(_to, _balance);
+        require(_balance > 0, "INSUFFICIENT AMOUNT");
+        _otherERC20Token.transfer(msg.sender, _balance);
     }
 }
